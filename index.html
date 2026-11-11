@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Автобус № 3 в Твери</title>
+<style>
+  :root { font-family: system-ui, sans-serif; line-height: 1.55; }
+  body { max-width: 58rem; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { margin: 0; font-size: clamp(1.7rem, 5vw, 2.6rem); }
+  h2 { margin: 0 0 .4rem; font-size: 1.2rem; }
+  p { margin: .4rem 0 1rem; }
+  input { padding: .45rem; font: inherit; }
+  label { margin-inline-end: .5rem; }
+  .windows { display: grid; gap: 1rem; margin: 1.25rem 0; }
+  section { padding: 1rem; border: 1px solid currentColor; border-radius: .5rem; }
+  ul { padding-inline-start: 1.3rem; margin-block: .5rem; }
+  .details { font-variant-numeric: tabular-nums; }
+  .note { font-size: .9rem; }
+  @media (min-width: 44rem) { .windows { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
+<main>
+  <h1>Автобус № 3 в Твери</h1>
+  <p>История проездов по GPS. Все времена московские.</p>
+  <label for="date">Дата</label>
+  <input id="date" type="date">
+  <div class="windows">
+    <section aria-labelledby="morning-title">
+      <h2 id="morning-title">Медицинский колледж → Технический университет</h2>
+      <p>Пн–пт, 07:10–07:50</p>
+      <div id="morning" class="details" aria-live="polite">Загрузка…</div>
+    </section>
+    <section aria-labelledby="evening-title">
+      <h2 id="evening-title">Технический университет → Перинатальный центр</h2>
+      <p>Пн–пт, 17:10–17:30</p>
+      <div id="evening" class="details" aria-live="polite">Загрузка…</div>
+    </section>
+  </div>
+  <p class="note">Время проезда указано приблизительно. Рядом приведён интервал между двумя GPS-замерами. Отчёт появляется после опроса.</p>
+  <noscript>Для просмотра отчётов включите JavaScript.</noscript>
+</main>
+<script type="module">
+  const date = document.querySelector('#date');
+  const clock = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+  const source = 'https://raw.githubusercontent.com/lfabe/tver-route-3/data/reports';
+  const day = new Date(Date.now() + 10_800_000);
+  date.max = day.toISOString().slice(0, 10);
+  if (day.getUTCDay() === 0) day.setUTCDate(day.getUTCDate() - 2);
+  if (day.getUTCDay() === 6) day.setUTCDate(day.getUTCDate() - 1);
+  date.value = day.toISOString().slice(0, 10);
+  let request;
+
+  async function showReport(window, selected, signal) {
+    const panel = document.getElementById(window);
+    panel.textContent = 'Загрузка…';
+    try {
+      const response = await fetch(`${source}/${selected}/${window}.json`, { signal, cache: 'no-store' });
+      if (signal.aborted) return;
+      if (response.status === 404) {
+        panel.textContent = 'За эту дату отчёта пока нет.';
+        return;
+      }
+      if (!response.ok) throw new Error('Отчёт недоступен');
+      const report = await response.json();
+      if (signal.aborted) return;
+      const summary = document.createElement('p');
+      summary.textContent = `Опрос ${clock.format(report.startedAt)}–${clock.format(report.endedAt)}. Ответов API: ${report.successfulPolls}, ошибок: ${report.failedPolls}.`;
+      const results = document.createElement(report.arrivals.length ? 'ul' : 'p');
+      if (!report.arrivals.length) {
+        results.textContent = report.successfulPolls ? 'Проезд не зафиксирован.' : 'Телеметрия недоступна.';
+      }
+      for (const { before, after } of report.arrivals.toSorted((a, b) => a.after - b.after)) {
+        const item = document.createElement('li');
+        const estimate = clock.format(Math.round((before + after) / 2000) * 1000);
+        item.textContent = `≈ ${estimate} (${clock.format(before)}–${clock.format(after)})`;
+        results.append(item);
+      }
+      panel.replaceChildren(results, summary);
+    } catch {
+      if (!signal.aborted) panel.textContent = 'Не удалось загрузить отчёт. Обновите страницу.';
+    }
+  }
+
+  function update() {
+    request?.abort();
+    request = new AbortController();
+    if (!date.value || !date.validity.valid) {
+      for (const panel of document.querySelectorAll('.details')) panel.textContent = 'Выберите дату.';
+      return;
+    }
+    for (const window of ['morning', 'evening']) showReport(window, date.value, request.signal);
+  }
+  date.addEventListener('change', update);
+  update();
+</script>
+</html>
